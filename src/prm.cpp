@@ -178,7 +178,9 @@ void PRM::plan() {
 
     // Create goal state
     ompl::base::ScopedState<> goal(space);
-    goal.random(); // TODO this should be taken interactively from the user
+    //goal.random(); // TODO this should be taken interactively from the user
+    goal->as<ompl::base::SE2StateSpace::StateType>()->setX(-3);
+    goal->as<ompl::base::SE2StateSpace::StateType>()->setY(-4);
 
     // Set the start and goal state
     simple_setup.setStartAndGoalStates(start, goal);
