@@ -8,28 +8,64 @@
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/geometric/SimpleSetup.h>
 #include <ompl/geometric/planners/prm/PRM.h>
-//#include <ompl/config.h>
-//#include <iostream>
+#include <turtlebot_prm/prm.h>
+#include <nav_msgs/OccupancyGrid.h>
+#include <occupancy_grid_utils/coordinate_conversions.h>
 
-bool isStateValid(const ompl::base::State *state) {
+PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50) :
+    nh(nodeHandle) {
+    map_received = false;
+    unknown_okay = unknown;
+    occupied_threshold = threshold;
+    initializeSubscribers();
+}
+
+void PRM::initializeSubscribers() {
+    map_subscriber = nh.subscribe("map", 1, &PRM::mapCallback, this);
+}
+
+void PRM::mapCallback( nav_msgs::OccupancyGrid new_map) {
+    // Check to see if we've previously received a map
+    if (map_received) {
+        ROS_WARN("New map received, this shouldn't happen");
+    }
+
+    map = new_map; // Save new map that we've got
+    map_received = true; // Mark that we've received a map
+}
+
+bool PRM::isStateValid(const ompl::base::State *state) {
     // First cast abstract state into expected SE2 state
     const ompl::base::SE2StateSpace::StateType *se2state = state->as<ompl::base::SE2StateSpace::StateType>();
 
     // Get first component of state and cast into real vector state space
-    const ompl::base::RealVectorStateSpace::StateType *pos = se2state->as<ompl::base::RealVectorStateSpace::StateType>(0);
+    //const ompl::base::RealVectorStateSpace::StateType *pos = se2state->as<ompl::base::RealVectorStateSpace::StateType>(0);
 
+    // Don't need this because all rotations are valid
     // Get second component of state and cast into SO(2) space
-    const ompl::base::SO2StateSpace::StateType *rot = se2state->as<ompl::base::SO2StateSpace::StateType>(1);
+    //const ompl::base::SO2StateSpace::StateType *rot = se2state->as<ompl::base::SO2StateSpace::StateType>(1);
 
     // TODO add validity checking here for state position and rotation
-    // All rotations will be valid
-    // Need to get occupancy map from ros message and then check position here
-    bool valid_state = false;
+    geometry_msgs::Point point;
+    point.x = se2state->getX();
+    point.y = se2state->getY();
 
-    return valid_state;
+    if (occupancy_grid_utils::withinBounds(map.info, point)) { // First check if we're in bounds
+        int index = occupancy_grid_utils::pointIndex(map.info, point);
+        int occupied_status = map.data[index];
+
+        if (unknown_okay && occupied_status == -1) { // Are unkown cells valid states?
+            return true;
+        }
+        else if (map.data[index] > occupied_threshold) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-void plan() {
+void PRM::plan() {
     // Construct the space we are planning in
     ompl::base::StateSpacePtr space(new ompl::base::SE2StateSpace());
 
@@ -45,7 +81,7 @@ void plan() {
     ompl::geometric::SimpleSetup simple_setup(space);
 
     // Set state validity checking for this space
-    simple_setup.setStateValidityChecker(boost::bind(&isStateValid, _1));
+    simple_setup.setStateValidityChecker(boost::bind(&PRM::isStateValid, this, _1));
 
     // Create start state
     ompl::base::ScopedState<> start(space);
@@ -75,8 +111,11 @@ void plan() {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    ros::init(argc, argv, "prm");
+    ros::NodeHandle nh;
     ROS_INFO("Planning for motion with OMPL");
-    plan();
+    PRM prm(nh);
+    prm.plan();
     return 0;
 }
