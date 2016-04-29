@@ -17,6 +17,7 @@
 PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50) :
     nh(nodeHandle) {
     map_received = false;
+    pose_received = false;
     unknown_okay = unknown;
     occupied_threshold = threshold;
     max_x = std::numeric_limits<int>::min();
@@ -28,6 +29,7 @@ PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50) 
 
 void PRM::initializeSubscribers() {
     map_subscriber = nh.subscribe("map", 1, &PRM::mapCallback, this);
+    amcl_pose_subscriber = nh.subscribe("amcl_pose", 1, &PRM::amclPoseCallback, this);
 }
 
 void PRM::mapCallback( nav_msgs::OccupancyGrid new_map) {
@@ -55,6 +57,11 @@ void PRM::mapCallback( nav_msgs::OccupancyGrid new_map) {
             min_y = bounds.points[i].y;
         }
     }
+}
+
+void PRM::amclPoseCallback(geometry_msgs::PoseWithCovarianceStamped new_pose) {
+    pose = new_pose.pose.pose;
+    pose_received = true;
 }
 
 bool PRM::isStateValid(const ompl::base::State *state) {
@@ -101,22 +108,21 @@ void PRM::plan() {
     // Construct the space we are planning in
     ompl::base::StateSpacePtr space(new ompl::base::SE2StateSpace());
 
-    ROS_INFO("Waiting for a map...");
+    ROS_DEBUG("Waiting for a map...");
     while (!map_received) {
         ros::Duration(0.5).sleep();
         ros::spinOnce();
     }
-    ROS_INFO("Got a map!");
+    ROS_DEBUG("Got a map!");
 
     // Set bounds for the R^2 part of SE(2)
     ompl::base::RealVectorBounds bounds(2);
-    // TODO set theses bounds based on the occupancy map
     bounds.setLow(0, min_x);
     bounds.setHigh(0, max_x);
     bounds.setLow(1, min_y);
     bounds.setHigh(1, max_y);
-    ROS_INFO_STREAM("Set X bounds of map to " << min_x << " -> " << max_x);
-    ROS_INFO_STREAM("Set Y bounds of map to " << min_y << " -> " << max_y);
+    ROS_DEBUG_STREAM("Set X bounds of map to " << min_x << " -> " << max_x);
+    ROS_DEBUG_STREAM("Set Y bounds of map to " << min_y << " -> " << max_y);
 
     space->as<ompl::base::SE2StateSpace>()->setBounds(bounds);
 
@@ -126,9 +132,19 @@ void PRM::plan() {
     // Set state validity checking for this space
     simple_setup.setStateValidityChecker(boost::bind(&PRM::isStateValid, this, _1));
 
+    ROS_DEBUG("Waiting for a pose from AMCL...");
+    while (!pose_received) {
+        ros::Duration(0.5).sleep();
+        ros::spinOnce();
+    }
+    ROS_DEBUG("Got a pose!");
+
     // Create start state
     ompl::base::ScopedState<> start(space);
-    start.random(); // TODO this should be taken from amcl/odom, not random
+    start->as<ompl::base::SE2StateSpace::StateType>()->setX(pose.position.x);
+    start->as<ompl::base::SE2StateSpace::StateType>()->setY(pose.position.y);
+    // start->as<ompl::base::SE2StateSpace::StateType>()->setYaw(pose.orientation.); Don't need this right now
+    ROS_DEBUG_STREAM("Set start pose to ( " << pose.position.x << ", " << pose.position.y << " )");
 
     // Create goal state
     ompl::base::ScopedState<> goal(space);
