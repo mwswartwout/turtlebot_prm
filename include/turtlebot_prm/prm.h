@@ -8,17 +8,21 @@
 #include <ompl/base/State.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <nav_msgs/Path.h>
+#include <ompl/geometric/PathGeometric.h>
 
 class PRM{
 public:
     explicit PRM(ros::NodeHandle& nodeHandle, bool unknown, int threshold);
     void plan();
+    nav_msgs::Path getPath();
 
 private:
     ros::NodeHandle nh;
 
     nav_msgs::OccupancyGrid map;
-    geometry_msgs::Pose pose;
+    geometry_msgs::Pose amcl_pose;
+    nav_msgs::Path ros_solution_path;
 
     ros::Subscriber map_subscriber;
     ros::Subscriber amcl_pose_subscriber;
@@ -36,6 +40,7 @@ private:
     void mapCallback(nav_msgs::OccupancyGrid new_map);
     void amclPoseCallback(geometry_msgs::PoseWithCovarianceStamped new_pose);
     bool isStateValid(const ompl::base::State *state);
+    nav_msgs::Path omplPathToRosPath(ompl::geometric::PathGeometric ompl_path);
 };
 
 #endif //TURTLEBOT_PRM_PRM_H

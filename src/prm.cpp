@@ -60,7 +60,7 @@ void PRM::mapCallback( nav_msgs::OccupancyGrid new_map) {
 }
 
 void PRM::amclPoseCallback(geometry_msgs::PoseWithCovarianceStamped new_pose) {
-    pose = new_pose.pose.pose;
+    amcl_pose = new_pose.pose.pose;
     pose_received = true;
 }
 
@@ -104,6 +104,29 @@ bool PRM::isStateValid(const ompl::base::State *state) {
     return false;
 }
 
+nav_msgs::Path PRM::omplPathToRosPath(ompl::geometric::PathGeometric ompl_path) {
+    // Create ROS path message that will be returned
+    nav_msgs::Path ros_path;
+    ros_path.header.frame_id = "map";
+
+    // Extract states from the path
+    std::vector<ompl::base::State*> ompl_states = ompl_path.getStates();
+
+    // Convert each state in a ros-compatible Pose
+    for (unsigned i = 0; i < ompl_states.size(); i++) {
+        geometry_msgs::PoseStamped pose;
+        pose.pose.position.x = ompl_states[i]->as<ompl::base::SE2StateSpace::StateType>()->getX();
+        pose.pose.position.y = ompl_states[i]->as<ompl::base::SE2StateSpace::StateType>()->getY();
+        ros_path.poses.push_back(pose);
+    }
+
+    return ros_path;
+}
+
+nav_msgs::Path PRM::getPath() {
+    return ros_solution_path;
+}
+
 void PRM::plan() {
     // Construct the space we are planning in
     ompl::base::StateSpacePtr space(new ompl::base::SE2StateSpace());
@@ -141,10 +164,10 @@ void PRM::plan() {
 
     // Create start state
     ompl::base::ScopedState<> start(space);
-    start->as<ompl::base::SE2StateSpace::StateType>()->setX(pose.position.x);
-    start->as<ompl::base::SE2StateSpace::StateType>()->setY(pose.position.y);
+    start->as<ompl::base::SE2StateSpace::StateType>()->setX(amcl_pose.position.x);
+    start->as<ompl::base::SE2StateSpace::StateType>()->setY(amcl_pose.position.y);
     // start->as<ompl::base::SE2StateSpace::StateType>()->setYaw(pose.orientation.); Don't need this right now
-    ROS_DEBUG_STREAM("Set start pose to ( " << pose.position.x << ", " << pose.position.y << " )");
+    ROS_DEBUG_STREAM("Set start pose to ( " << amcl_pose.position.x << ", " << amcl_pose.position.y << " )");
 
     // Create goal state
     ompl::base::ScopedState<> goal(space);
@@ -163,7 +186,9 @@ void PRM::plan() {
     if (solved) {
         ROS_INFO("Found solution:");
         simple_setup.simplifySolution();
-        simple_setup.getSolutionPath().print(std::cout); // TODO see if this can be switched to ROS_INFO
+        ompl::geometric::PathGeometric ompl_solution_path = simple_setup.getSolutionPath();
+        ompl_solution_path.print(std::cout); // TODO see if this can be switched to ROS_INFO
+        ros_solution_path = omplPathToRosPath(ompl_solution_path);
     }
     else {
         ROS_WARN("No solution found");
@@ -176,5 +201,15 @@ int main(int argc, char** argv) {
     ROS_INFO("Planning for motion with OMPL");
     PRM prm(nh);
     prm.plan();
+
+    ros::Publisher solution_path_publisher = nh.advertise<nav_msgs::Path>("solution_path", 1);
+    nav_msgs::Path solution_path = prm.getPath();
+
+    while (ros::ok()) {
+        solution_path_publisher.publish(solution_path);
+        ros::spinOnce();
+        ros::Duration(0.5).sleep();
+    }
+
     return 0;
 }
