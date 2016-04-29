@@ -11,12 +11,18 @@
 #include <turtlebot_prm/prm.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <occupancy_grid_utils/coordinate_conversions.h>
+#include <geometry_msgs/Polygon.h>
+#include <limits>
 
 PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50) :
     nh(nodeHandle) {
     map_received = false;
     unknown_okay = unknown;
     occupied_threshold = threshold;
+    max_x = std::numeric_limits<int>::min();
+    max_y = std::numeric_limits<int>::min();
+    min_x = std::numeric_limits<int>::max();
+    min_y = std::numeric_limits<int>::max();
     initializeSubscribers();
 }
 
@@ -32,6 +38,23 @@ void PRM::mapCallback( nav_msgs::OccupancyGrid new_map) {
 
     map = new_map; // Save new map that we've got
     map_received = true; // Mark that we've received a map
+
+    // Figure out the x and y limits of our map
+    geometry_msgs::Polygon bounds = occupancy_grid_utils::gridPolygon(map.info);
+    for (unsigned i = 0; i < bounds.points.size(); i++) {
+        if (bounds.points[i].x > max_x) {
+            max_x = bounds.points[i].x;
+        }
+        if (bounds.points[i].x < min_x) {
+            min_x = bounds.points[i].x;
+        }
+        if (bounds.points[i].y > max_y) {
+            max_y = bounds.points[i].y;
+        }
+        if (bounds.points[i].y < min_y) {
+            min_y = bounds.points[i].y;
+        }
+    }
 }
 
 bool PRM::isStateValid(const ompl::base::State *state) {
@@ -45,21 +68,30 @@ bool PRM::isStateValid(const ompl::base::State *state) {
     // Get second component of state and cast into SO(2) space
     //const ompl::base::SO2StateSpace::StateType *rot = se2state->as<ompl::base::SO2StateSpace::StateType>(1);
 
-    // TODO add validity checking here for state position and rotation
     geometry_msgs::Point point;
     point.x = se2state->getX();
     point.y = se2state->getY();
+    ROS_DEBUG_STREAM("Checking validity of state ( " << point.x << ", " << point.y <<")");
 
     if (occupancy_grid_utils::withinBounds(map.info, point)) { // First check if we're in bounds
+        ROS_DEBUG("State is in bounds... now checking occupancy...");
         int index = occupancy_grid_utils::pointIndex(map.info, point);
         int occupied_status = map.data[index];
 
         if (unknown_okay && occupied_status == -1) { // Are unkown cells valid states?
+            ROS_DEBUG("State occupancy is unknown and unknown_okay has been set to true");
             return true;
         }
-        else if (map.data[index] > occupied_threshold) {
+        else if (map.data[index] < occupied_threshold) {
+            ROS_DEBUG("State is not occupied");
             return true;
         }
+        else {
+            ROS_DEBUG("State is occupied");
+        }
+    }
+    else {
+        ROS_DEBUG("State is not in bounds");
     }
 
     return false;
@@ -69,11 +101,22 @@ void PRM::plan() {
     // Construct the space we are planning in
     ompl::base::StateSpacePtr space(new ompl::base::SE2StateSpace());
 
+    ROS_INFO("Waiting for a map...");
+    while (!map_received) {
+        ros::Duration(0.5).sleep();
+        ros::spinOnce();
+    }
+    ROS_INFO("Got a map!");
+
     // Set bounds for the R^2 part of SE(2)
     ompl::base::RealVectorBounds bounds(2);
     // TODO set theses bounds based on the occupancy map
-    bounds.setLow(-1);
-    bounds.setHigh(1);
+    bounds.setLow(0, min_x);
+    bounds.setHigh(0, max_x);
+    bounds.setLow(1, min_y);
+    bounds.setHigh(1, max_y);
+    ROS_INFO_STREAM("Set X bounds of map to " << min_x << " -> " << max_x);
+    ROS_INFO_STREAM("Set Y bounds of map to " << min_y << " -> " << max_y);
 
     space->as<ompl::base::SE2StateSpace>()->setBounds(bounds);
 

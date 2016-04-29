@@ -10,7 +10,7 @@
 
 class PRM{
 public:
-    PRM(ros::NodeHandle& nodeHandle, bool unknown, int threshold);
+    explicit PRM(ros::NodeHandle& nodeHandle, bool unknown, int threshold);
     void plan();
 
 private:
@@ -20,6 +20,8 @@ private:
     bool map_received;
     bool unknown_okay;
     int occupied_threshold;
+    double min_x, max_x;
+    double min_y, max_y;
 
     void initializeSubscribers();
     void mapCallback(nav_msgs::OccupancyGrid new_map);
