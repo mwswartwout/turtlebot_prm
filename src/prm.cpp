@@ -13,11 +13,13 @@
 #include <occupancy_grid_utils/coordinate_conversions.h>
 #include <geometry_msgs/Polygon.h>
 #include <limits>
+#include <occupancy_grid_utils/shortest_path.h>
 
-PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50) :
+PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50, double radius = 0.2) :
     nh(nodeHandle) {
     map_received = false;
     pose_received = false;
+    robot_radius = radius;
     unknown_okay = unknown;
     occupied_threshold = threshold;
     max_x = std::numeric_limits<int>::min();
@@ -38,11 +40,12 @@ void PRM::mapCallback( nav_msgs::OccupancyGrid new_map) {
         ROS_WARN("New map received, this shouldn't happen");
     }
 
-    map = new_map; // Save new map that we've got
+    map = new_map;
+    inflated_map = occupancy_grid_utils::inflateObstacles(new_map, robot_radius, unknown_okay); // Save new map that we've got
     map_received = true; // Mark that we've received a map
 
     // Figure out the x and y limits of our map
-    geometry_msgs::Polygon bounds = occupancy_grid_utils::gridPolygon(map.info);
+    geometry_msgs::Polygon bounds = occupancy_grid_utils::gridPolygon(inflated_map->info);
     for (unsigned i = 0; i < bounds.points.size(); i++) {
         if (bounds.points[i].x > max_x) {
             max_x = bounds.points[i].x;
@@ -80,16 +83,16 @@ bool PRM::isStateValid(const ompl::base::State *state) {
     point.y = se2state->getY();
     ROS_DEBUG_STREAM("Checking validity of state ( " << point.x << ", " << point.y <<")");
 
-    if (occupancy_grid_utils::withinBounds(map.info, point)) { // First check if we're in bounds
+    if (occupancy_grid_utils::withinBounds(inflated_map->info, point)) { // First check if we're in bounds
         ROS_DEBUG("State is in bounds... now checking occupancy...");
-        int index = occupancy_grid_utils::pointIndex(map.info, point);
-        int occupied_status = map.data[index];
+        int index = occupancy_grid_utils::pointIndex(inflated_map->info, point);
+        int occupied_status = inflated_map->data[index];
 
         if (unknown_okay && occupied_status == -1) { // Are unkown cells valid states?
             ROS_DEBUG("State occupancy is unknown and unknown_okay has been set to true");
             return true;
         }
-        else if (map.data[index] < occupied_threshold) {
+        else if (inflated_map->data[index] < occupied_threshold) {
             ROS_DEBUG("State is not occupied");
             return true;
         }
@@ -125,6 +128,10 @@ nav_msgs::Path PRM::omplPathToRosPath(ompl::geometric::PathGeometric ompl_path) 
 
 nav_msgs::Path PRM::getPath() {
     return ros_solution_path;
+}
+
+nav_msgs::OccupancyGrid::Ptr PRM::getInflatedMap(){
+    return inflated_map;
 }
 
 void PRM::plan() {
@@ -205,8 +212,17 @@ int main(int argc, char** argv) {
     ros::Publisher solution_path_publisher = nh.advertise<nav_msgs::Path>("solution_path", 1);
     nav_msgs::Path solution_path = prm.getPath();
 
+    ros::Publisher inflated_map_publisher = nh.advertise<nav_msgs::OccupancyGrid>("inflated_map", 1);
+    nav_msgs::OccupancyGrid::Ptr inflated_map = prm.getInflatedMap();
+
+    nav_msgs::OccupancyGrid publishable_map;
+    publishable_map.data = inflated_map->data;
+    publishable_map.header = inflated_map->header;
+    publishable_map.info = inflated_map->info;
+
     while (ros::ok()) {
         solution_path_publisher.publish(solution_path);
+        inflated_map_publisher.publish(publishable_map);
         ros::spinOnce();
         ros::Duration(0.5).sleep();
     }

@@ -13,14 +13,16 @@
 
 class PRM{
 public:
-    explicit PRM(ros::NodeHandle& nodeHandle, bool unknown, int threshold);
+    explicit PRM(ros::NodeHandle& nodeHandle, bool unknown, int threshold, double radius);
     void plan();
     nav_msgs::Path getPath();
+    nav_msgs::OccupancyGrid::Ptr getInflatedMap();
 
 private:
     ros::NodeHandle nh;
 
     nav_msgs::OccupancyGrid map;
+    nav_msgs::OccupancyGrid::Ptr inflated_map;
     geometry_msgs::Pose amcl_pose;
     nav_msgs::Path ros_solution_path;
 
@@ -35,6 +37,7 @@ private:
 
     double min_x, max_x;
     double min_y, max_y;
+    double robot_radius;
 
     void initializeSubscribers();
     void mapCallback(nav_msgs::OccupancyGrid new_map);
