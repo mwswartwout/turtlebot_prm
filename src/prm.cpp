@@ -3,6 +3,8 @@
 // Adapted from the OMPL demo file RigidBodyPlanning.cpp
 //
 
+// TODO see about expanding this w/ controls
+
 #include <ros/ros.h>
 #include <ompl/base/SpaceInformation.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
@@ -158,6 +160,7 @@ void PRM::plan() {
 
     // Define a simple setup class
     ompl::geometric::SimpleSetup simple_setup(space);
+    // TODO make this use a PRM
 
     // Set state validity checking for this space
     simple_setup.setStateValidityChecker(boost::bind(&PRM::isStateValid, this, _1));
