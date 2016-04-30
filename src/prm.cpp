@@ -4,6 +4,8 @@
 //
 
 // TODO see about expanding this w/ controls
+// TODO turn this into a plugin that extends the nav_core::BaseGlobalPlanner so that it can be dropped into the navstack
+// TODO make this plan for optimal path length
 
 #include <ros/ros.h>
 #include <ompl/base/SpaceInformation.h>
