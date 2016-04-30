@@ -1,6 +1,7 @@
 //
 // Created by matt on 4/29/16.
 // Adapted from the OMPL demo file RigidBodyPlanning.cpp
+// BaseGlobalPlanner modifications adapted from carrot_planner
 //
 
 // TODO see about expanding this w/ controls
@@ -20,9 +21,12 @@
 #include <occupancy_grid_utils/shortest_path.h>
 
 PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50, double radius = 0.2) :
-    nh(nodeHandle) {
+        nh(nodeHandle),
+        costmap("my_costmap", tf) {
+
     map_received = false;
     pose_received = false;
+    initialized = false;
     robot_radius = radius;
     unknown_okay = unknown;
     occupied_threshold = threshold;
@@ -31,6 +35,15 @@ PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50, 
     min_x = std::numeric_limits<int>::max();
     min_y = std::numeric_limits<int>::max();
     initializeSubscribers();
+}
+
+void PRM::initialize(std::string name, costmap_2d::Costmap2DROS* costmap_ros) {
+    if (!initialized) {
+
+    }
+    else {
+        ROS_WARN("This planner has already been initialized... doing nothing");
+    }
 }
 
 void PRM::initializeSubscribers() {
@@ -138,7 +151,18 @@ nav_msgs::OccupancyGrid::Ptr PRM::getInflatedMap(){
     return inflated_map;
 }
 
-void PRM::plan() {
+/*
+costmap_2d::Costmap2DROS* occupancyGridToCostmap(nav_msgs::OccupancyGrid& occupancy_grid) {
+    int cells_size_x = occupancy_grid.info.width;
+    int cells_size_y = occupancy_grid.info.height;
+    double resolution = occupancy_grid.info.resolution;
+    double origin_x = occupancy_grid.info.origin.position.x;
+    double origin_y = occupancy_grid.info.origin.position.y;
+    costmap_2d::Costmap2D costmap(cells_size_x, cells_size_y, resolution, origin_x, origin_y);
+
+}*/
+
+void PRM::makePlan() {
     // Construct the space we are planning in
     ompl::base::StateSpacePtr space(new ompl::base::SE2StateSpace());
 
@@ -209,12 +233,18 @@ void PRM::plan() {
     }
 }
 
+bool PRM::makePlan(const geometry_msgs::PoseStamped& start,
+                   const geometry_msgs::PoseStamped& goal,
+                   std::vector<geometry_msgs::PoseStamped>& plan) {
+
+}
+
 int main(int argc, char** argv) {
     ros::init(argc, argv, "prm");
     ros::NodeHandle nh;
     ROS_INFO("Planning for motion with OMPL");
     PRM prm(nh);
-    prm.plan();
+    prm.makePlan();
 
     ros::Publisher solution_path_publisher = nh.advertise<nav_msgs::Path>("solution_path", 1);
     nav_msgs::Path solution_path = prm.getPath();

@@ -9,9 +9,10 @@ endif()
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  occupancy_grid_utils
+    roscpp
+    rospy
+    occupancy_grid_utils
+    costmap_2d
 )
 
 ## System dependencies are found with CMake's conventions
