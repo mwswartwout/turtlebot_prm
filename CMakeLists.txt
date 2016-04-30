@@ -125,9 +125,7 @@ include_directories(
 )
 
 ## Declare a C++ library
-# add_library(turtlebot_prm
-#   src/${PROJECT_NAME}/turtlebot_prm.cpp
-# )
+add_library(prm_lib src/prm.cpp)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -135,14 +133,14 @@ include_directories(
 # add_dependencies(turtlebot_prm ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Declare a C++ executable
-add_executable(prm src/prm.cpp)
+#add_executable(prm src/prm.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 # add_dependencies(turtlebot_prm_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(prm ${catkin_LIBRARIES} ${OMPL_LIBRARIES})
+target_link_libraries(prm_lib ${catkin_LIBRARIES} ${OMPL_LIBRARIES})
 
 #############
 ## Install ##

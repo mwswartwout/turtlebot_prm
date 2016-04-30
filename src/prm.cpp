@@ -19,27 +19,50 @@
 #include <geometry_msgs/Polygon.h>
 #include <limits>
 #include <occupancy_grid_utils/shortest_path.h>
+#include <base_local_planner/costmap_model.h>
 
-PRM::PRM(ros::NodeHandle& nodeHandle, bool unknown = false, int threshold = 50, double radius = 0.2) :
-        nh(nodeHandle),
-        costmap("my_costmap", tf) {
-
-    map_received = false;
-    pose_received = false;
-    initialized = false;
-    robot_radius = radius;
-    unknown_okay = unknown;
-    occupied_threshold = threshold;
-    max_x = std::numeric_limits<int>::min();
-    max_y = std::numeric_limits<int>::min();
-    min_x = std::numeric_limits<int>::max();
-    min_y = std::numeric_limits<int>::max();
+PRM::PRM() :
+        costmap_ros(NULL),
+        map_received(false),
+        pose_received(false),
+        initialized(false),
+        robot_radius(0.2),
+        unknown_okay(false),
+        occupied_threshold(50),
+        max_x(std::numeric_limits<int>::min()),
+        max_y(std::numeric_limits<int>::min()),
+        min_x(std::numeric_limits<int>::max()),
+        min_y(std::numeric_limits<int>::max()) {
+    ROS_INFO("In constructor of PRM");
     initializeSubscribers();
 }
 
-void PRM::initialize(std::string name, costmap_2d::Costmap2DROS* costmap_ros) {
-    if (!initialized) {
+PRM::PRM(std::string name, costmap_2d::Costmap2DROS* new_costmap_ros) :
+        costmap_ros(NULL),
+        map_received(false),
+        pose_received(false),
+        initialized(false),
+        unknown_okay(false),
+        occupied_threshold(50),
+        max_x(std::numeric_limits<int>::min()),
+        max_y(std::numeric_limits<int>::min()),
+        min_x(std::numeric_limits<int>::max()),
+        min_y(std::numeric_limits<int>::max()) {
+    ROS_INFO("In constructor of PRM");
+    initializeSubscribers();
+    initialize(name, new_costmap_ros);
+}
 
+void PRM::initialize(std::string name, costmap_2d::Costmap2DROS* new_costmap_ros) {
+    if (!initialized) {
+        costmap_ros = new_costmap_ros;
+        costmap = costmap_ros->getCostmap();
+        ros::NodeHandle private_nh("~/" + name);
+        private_nh.param("step_size", step_size, costmap->getResolution());
+        private_nh.param("min_dist_from_robot", robot_radius, 0.2);
+        world_model = new base_local_planner::CostmapModel(*costmap);
+
+        initialized = true;
     }
     else {
         ROS_WARN("This planner has already been initialized... doing nothing");
@@ -88,37 +111,18 @@ bool PRM::isStateValid(const ompl::base::State *state) {
     // First cast abstract state into expected SE2 state
     const ompl::base::SE2StateSpace::StateType *se2state = state->as<ompl::base::SE2StateSpace::StateType>();
 
-    // Get first component of state and cast into real vector state space
-    //const ompl::base::RealVectorStateSpace::StateType *pos = se2state->as<ompl::base::RealVectorStateSpace::StateType>(0);
-
-    // Don't need this because all rotations are valid
-    // Get second component of state and cast into SO(2) space
-    //const ompl::base::SO2StateSpace::StateType *rot = se2state->as<ompl::base::SO2StateSpace::StateType>(1);
-
     geometry_msgs::Point point;
     point.x = se2state->getX();
     point.y = se2state->getY();
     ROS_DEBUG_STREAM("Checking validity of state ( " << point.x << ", " << point.y <<")");
 
-    if (occupancy_grid_utils::withinBounds(inflated_map->info, point)) { // First check if we're in bounds
-        ROS_DEBUG("State is in bounds... now checking occupancy...");
-        int index = occupancy_grid_utils::pointIndex(inflated_map->info, point);
-        int occupied_status = inflated_map->data[index];
+    std::vector<geometry_msgs::Point> footprint;
+    footprint.push_back(point);
 
-        if (unknown_okay && occupied_status == -1) { // Are unkown cells valid states?
-            ROS_DEBUG("State occupancy is unknown and unknown_okay has been set to true");
-            return true;
-        }
-        else if (inflated_map->data[index] < occupied_threshold) {
-            ROS_DEBUG("State is not occupied");
-            return true;
-        }
-        else {
-            ROS_DEBUG("State is occupied");
-        }
-    }
-    else {
-        ROS_DEBUG("State is not in bounds");
+    double point_cost = world_model->footprintCost(point, footprint, robot_radius, robot_radius);
+
+    if (point_cost > 0) { // No collision detected
+        return true;
     }
 
     return false;
@@ -143,44 +147,25 @@ nav_msgs::Path PRM::omplPathToRosPath(ompl::geometric::PathGeometric ompl_path) 
     return ros_path;
 }
 
-nav_msgs::Path PRM::getPath() {
-    return ros_solution_path;
-}
-
 nav_msgs::OccupancyGrid::Ptr PRM::getInflatedMap(){
     return inflated_map;
 }
 
-/*
-costmap_2d::Costmap2DROS* occupancyGridToCostmap(nav_msgs::OccupancyGrid& occupancy_grid) {
-    int cells_size_x = occupancy_grid.info.width;
-    int cells_size_y = occupancy_grid.info.height;
-    double resolution = occupancy_grid.info.resolution;
-    double origin_x = occupancy_grid.info.origin.position.x;
-    double origin_y = occupancy_grid.info.origin.position.y;
-    costmap_2d::Costmap2D costmap(cells_size_x, cells_size_y, resolution, origin_x, origin_y);
-
-}*/
-
-void PRM::makePlan() {
+bool PRM::makePlan(const geometry_msgs::PoseStamped& ros_start,
+                   const geometry_msgs::PoseStamped& ros_goal,
+                   std::vector<geometry_msgs::PoseStamped>& plan) {
     // Construct the space we are planning in
     ompl::base::StateSpacePtr space(new ompl::base::SE2StateSpace());
 
-    ROS_DEBUG("Waiting for a map...");
-    while (!map_received) {
-        ros::Duration(0.5).sleep();
-        ros::spinOnce();
-    }
-    ROS_DEBUG("Got a map!");
 
     // Set bounds for the R^2 part of SE(2)
     ompl::base::RealVectorBounds bounds(2);
-    bounds.setLow(0, min_x);
-    bounds.setHigh(0, max_x);
-    bounds.setLow(1, min_y);
-    bounds.setHigh(1, max_y);
-    ROS_DEBUG_STREAM("Set X bounds of map to " << min_x << " -> " << max_x);
-    ROS_DEBUG_STREAM("Set Y bounds of map to " << min_y << " -> " << max_y);
+    bounds.setLow(0, 0);
+    bounds.setHigh(0, costmap->getSizeInMetersX());
+    bounds.setLow(1, 0);
+    bounds.setHigh(1, costmap->getSizeInMetersY());
+    ROS_DEBUG_STREAM("Set X bounds of map to " << 0 << " -> " << costmap->getSizeInMetersX());
+    ROS_DEBUG_STREAM("Set Y bounds of map to " << 0 << " -> " << costmap->getSizeInMetersY());
 
     space->as<ompl::base::SE2StateSpace>()->setBounds(bounds);
 
@@ -191,28 +176,22 @@ void PRM::makePlan() {
     // Set state validity checking for this space
     simple_setup.setStateValidityChecker(boost::bind(&PRM::isStateValid, this, _1));
 
-    ROS_DEBUG("Waiting for a pose from AMCL...");
-    while (!pose_received) {
-        ros::Duration(0.5).sleep();
-        ros::spinOnce();
-    }
-    ROS_DEBUG("Got a pose!");
-
     // Create start state
-    ompl::base::ScopedState<> start(space);
-    start->as<ompl::base::SE2StateSpace::StateType>()->setX(amcl_pose.position.x);
-    start->as<ompl::base::SE2StateSpace::StateType>()->setY(amcl_pose.position.y);
-    // start->as<ompl::base::SE2StateSpace::StateType>()->setYaw(pose.orientation.); Don't need this right now
-    ROS_DEBUG_STREAM("Set start pose to ( " << amcl_pose.position.x << ", " << amcl_pose.position.y << " )");
+    ompl::base::ScopedState<> ompl_start(space);
+    ompl_start->as<ompl::base::SE2StateSpace::StateType>()->setX(ros_start.pose.position.x);
+    ompl_start->as<ompl::base::SE2StateSpace::StateType>()->setY(ros_start.pose.position.y);
+    //start->as<ompl::base::SE2StateSpace::StateType>()->setYaw(start.orientation.); Don't need this right now
+    ROS_DEBUG_STREAM("Set start pose to ( " << ros_start.pose.position.x << ", " << ros_start.pose.position.y << " )");
 
     // Create goal state
-    ompl::base::ScopedState<> goal(space);
+    ompl::base::ScopedState<> ompl_goal(space);
     //goal.random(); // TODO this should be taken interactively from the user
-    goal->as<ompl::base::SE2StateSpace::StateType>()->setX(-3);
-    goal->as<ompl::base::SE2StateSpace::StateType>()->setY(-4);
+    ompl_goal->as<ompl::base::SE2StateSpace::StateType>()->setX(ros_goal.pose.position.x);
+    ompl_goal->as<ompl::base::SE2StateSpace::StateType>()->setY(ros_goal.pose.position.y);
+    ROS_DEBUG_STREAM("Set goal pose to ( " << ros_goal.pose.position.x << ", " << ros_goal.pose.position.y << " )");
 
     // Set the start and goal state
-    simple_setup.setStartAndGoalStates(start, goal);
+    simple_setup.setStartAndGoalStates(ompl_start, ompl_goal);
 
     // Optional, get more output
     simple_setup.setup();
@@ -226,43 +205,16 @@ void PRM::makePlan() {
         simple_setup.simplifySolution();
         ompl::geometric::PathGeometric ompl_solution_path = simple_setup.getSolutionPath();
         ompl_solution_path.print(std::cout); // TODO see if this can be switched to ROS_INFO
-        ros_solution_path = omplPathToRosPath(ompl_solution_path);
+        nav_msgs::Path ros_solution_path = omplPathToRosPath(ompl_solution_path);
+
+        // Populate the std::vector from the nav_msgs::Path
+        for (unsigned i = 0; i < ros_solution_path.poses.size(); i++) {
+            plan.push_back(ros_solution_path.poses[i]);
+        }
     }
     else {
         ROS_WARN("No solution found");
     }
-}
 
-bool PRM::makePlan(const geometry_msgs::PoseStamped& start,
-                   const geometry_msgs::PoseStamped& goal,
-                   std::vector<geometry_msgs::PoseStamped>& plan) {
-
-}
-
-int main(int argc, char** argv) {
-    ros::init(argc, argv, "prm");
-    ros::NodeHandle nh;
-    ROS_INFO("Planning for motion with OMPL");
-    PRM prm(nh);
-    prm.makePlan();
-
-    ros::Publisher solution_path_publisher = nh.advertise<nav_msgs::Path>("solution_path", 1);
-    nav_msgs::Path solution_path = prm.getPath();
-
-    ros::Publisher inflated_map_publisher = nh.advertise<nav_msgs::OccupancyGrid>("inflated_map", 1);
-    nav_msgs::OccupancyGrid::Ptr inflated_map = prm.getInflatedMap();
-
-    nav_msgs::OccupancyGrid publishable_map;
-    publishable_map.data = inflated_map->data;
-    publishable_map.header = inflated_map->header;
-    publishable_map.info = inflated_map->info;
-
-    while (ros::ok()) {
-        solution_path_publisher.publish(solution_path);
-        inflated_map_publisher.publish(publishable_map);
-        ros::spinOnce();
-        ros::Duration(0.5).sleep();
-    }
-
-    return 0;
+    return true;
 }
