@@ -14,12 +14,13 @@
 #include <ompl/geometric/SimpleSetup.h>
 #include <ompl/geometric/planners/prm/PRM.h>
 #include <turtlebot_prm/prm.h>
-#include <nav_msgs/OccupancyGrid.h>
 #include <occupancy_grid_utils/coordinate_conversions.h>
-#include <geometry_msgs/Polygon.h>
-#include <limits>
 #include <occupancy_grid_utils/shortest_path.h>
 #include <base_local_planner/costmap_model.h>
+#include <pluginlib/class_list_macros.h>
+
+// Register this planner as a BaseGlobalPlanner plugin
+PLUGINLIB_EXPORT_CLASS(PRM, nav_core::BaseGlobalPlanner)
 
 PRM::PRM() :
         costmap_ros(NULL),
@@ -218,3 +219,4 @@ bool PRM::makePlan(const geometry_msgs::PoseStamped& ros_start,
 
     return true;
 }
+
