@@ -5,6 +5,7 @@
 #ifndef TURTLEBOT_PRM_PRM_H
 #define TURTLEBOT_PRM_PRM_H
 
+#include <ros/ros.h>
 #include <ompl/base/State.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
@@ -35,6 +36,7 @@ private:
 
     ros::Subscriber map_subscriber;
     ros::Subscriber amcl_pose_subscriber;
+    ros::Publisher plan_publisher;
 
     costmap_2d::Costmap2DROS* costmap_ros;
     costmap_2d::Costmap2D* costmap;

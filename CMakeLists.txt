@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
     occupancy_grid_utils
     costmap_2d
     nav_core
+    base_local_planner
 )
 
 ## System dependencies are found with CMake's conventions

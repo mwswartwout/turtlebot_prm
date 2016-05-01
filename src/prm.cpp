@@ -18,9 +18,20 @@
 #include <occupancy_grid_utils/shortest_path.h>
 #include <base_local_planner/costmap_model.h>
 #include <pluginlib/class_list_macros.h>
+#include <ompl/geometric/planners/prm/PRMstar.h>
+#include <ompl/base/objectives/PathLengthOptimizationObjective.h>
 
 // Register this planner as a BaseGlobalPlanner plugin
 PLUGINLIB_EXPORT_CLASS(PRM, nav_core::BaseGlobalPlanner)
+
+geometry_msgs::Quaternion convertPlanarPhiToQuaternion(double phi) {
+    geometry_msgs::Quaternion quaternion;
+    quaternion.x = 0.0;
+    quaternion.y = 0.0;
+    quaternion.z = sin(phi / 2.0);
+    quaternion.w = cos(phi / 2.0);
+    return quaternion;
+}
 
 PRM::PRM() :
         costmap_ros(NULL),
@@ -63,6 +74,7 @@ void PRM::initialize(std::string name, costmap_2d::Costmap2DROS* new_costmap_ros
         private_nh.param("min_dist_from_robot", robot_radius, 0.2);
         world_model = new base_local_planner::CostmapModel(*costmap);
 
+        plan_publisher = private_nh.advertise<nav_msgs::Path>("prm_plan", 1, true);
         initialized = true;
     }
     else {
@@ -122,7 +134,7 @@ bool PRM::isStateValid(const ompl::base::State *state) {
 
     double point_cost = world_model->footprintCost(point, footprint, robot_radius, robot_radius);
 
-    if (point_cost > 0) { // No collision detected
+    if (point_cost >= 0) { // No collision detected
         return true;
     }
 
@@ -142,6 +154,8 @@ nav_msgs::Path PRM::omplPathToRosPath(ompl::geometric::PathGeometric ompl_path) 
         geometry_msgs::PoseStamped pose;
         pose.pose.position.x = ompl_states[i]->as<ompl::base::SE2StateSpace::StateType>()->getX();
         pose.pose.position.y = ompl_states[i]->as<ompl::base::SE2StateSpace::StateType>()->getY();
+        double yaw = ompl_states[i]->as<ompl::base::SE2StateSpace::StateType>()->getYaw();
+        pose.pose.orientation = convertPlanarPhiToQuaternion(yaw);
         ros_path.poses.push_back(pose);
     }
 
@@ -155,24 +169,36 @@ nav_msgs::OccupancyGrid::Ptr PRM::getInflatedMap(){
 bool PRM::makePlan(const geometry_msgs::PoseStamped& ros_start,
                    const geometry_msgs::PoseStamped& ros_goal,
                    std::vector<geometry_msgs::PoseStamped>& plan) {
+    if (!initialized) {
+        ROS_ERROR("The planner has not been initialized, please call initialize() to use the planner");
+        return false;
+    }
+
     // Construct the space we are planning in
     ompl::base::StateSpacePtr space(new ompl::base::SE2StateSpace());
-
+    ompl::base::SpaceInformationPtr space_information(new ompl::base::SpaceInformation(space));
 
     // Set bounds for the R^2 part of SE(2)
     ompl::base::RealVectorBounds bounds(2);
-    bounds.setLow(0, 0);
-    bounds.setHigh(0, costmap->getSizeInMetersX());
-    bounds.setLow(1, 0);
-    bounds.setHigh(1, costmap->getSizeInMetersY());
+    bounds.setLow(0, costmap->getOriginX());
+    bounds.setHigh(0, costmap->getSizeInMetersX() - costmap->getOriginX());
+    bounds.setLow(1, costmap->getOriginY());
+    bounds.setHigh(1, costmap->getSizeInMetersY() - costmap->getOriginY());
     ROS_DEBUG_STREAM("Set X bounds of map to " << 0 << " -> " << costmap->getSizeInMetersX());
     ROS_DEBUG_STREAM("Set Y bounds of map to " << 0 << " -> " << costmap->getSizeInMetersY());
 
     space->as<ompl::base::SE2StateSpace>()->setBounds(bounds);
 
     // Define a simple setup class
-    ompl::geometric::SimpleSetup simple_setup(space);
-    // TODO make this use a PRM
+    ompl::geometric::SimpleSetup simple_setup(space_information);
+
+    // Let's use the PRM* optimizing planner
+    ompl::base::PlannerPtr planner(new ompl::geometric::PRMstar(space_information));
+    simple_setup.setPlanner(planner);
+
+    // Let's optimize for shortest path length
+    ompl::base::OptimizationObjectivePtr objective(new ompl::base::PathLengthOptimizationObjective(space_information));
+    simple_setup.setOptimizationObjective(objective);
 
     // Set state validity checking for this space
     simple_setup.setStateValidityChecker(boost::bind(&PRM::isStateValid, this, _1));
@@ -186,7 +212,6 @@ bool PRM::makePlan(const geometry_msgs::PoseStamped& ros_start,
 
     // Create goal state
     ompl::base::ScopedState<> ompl_goal(space);
-    //goal.random(); // TODO this should be taken interactively from the user
     ompl_goal->as<ompl::base::SE2StateSpace::StateType>()->setX(ros_goal.pose.position.x);
     ompl_goal->as<ompl::base::SE2StateSpace::StateType>()->setY(ros_goal.pose.position.y);
     ROS_DEBUG_STREAM("Set goal pose to ( " << ros_goal.pose.position.x << ", " << ros_goal.pose.position.y << " )");
@@ -209,9 +234,19 @@ bool PRM::makePlan(const geometry_msgs::PoseStamped& ros_start,
         nav_msgs::Path ros_solution_path = omplPathToRosPath(ompl_solution_path);
 
         // Populate the std::vector from the nav_msgs::Path
+        geometry_msgs::PoseStamped temp_pose;
         for (unsigned i = 0; i < ros_solution_path.poses.size(); i++) {
-            plan.push_back(ros_solution_path.poses[i]);
+            ros::Time plan_time = ros::Time::now();
+
+            temp_pose.header.stamp = plan_time;
+            temp_pose.header.frame_id = costmap_ros->getGlobalFrameID();
+            temp_pose.pose = ros_solution_path.poses[i].pose;
+
+            plan.push_back(temp_pose);
         }
+
+        plan_publisher.publish(ros_solution_path);
+        ros::spinOnce();
     }
     else {
         ROS_WARN("No solution found");
